@@ -136,3 +136,17 @@
     (map-delete stakers { staker: tx-sender })
     (ok "Emergency withdrawal successful")))
 
+
+(define-data-var voting-period-start uint u0)
+(define-data-var voting-period-length uint u1440) ;; 24 hours in blocks
+
+(define-public (start-voting-period)
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (var-set voting-period-start (unwrap-panic (get-block-info? time u0)))
+    (ok "Voting period started")))
+
+(define-read-only (is-voting-active)
+  (let ((current-time (unwrap-panic (get-block-info? time u0))))
+    (<= current-time (+ (var-get voting-period-start) (var-get voting-period-length)))))
+
