@@ -124,3 +124,15 @@
                  { charity: charity } 
                  { verified: true, 
                    verification-date: (unwrap-panic (get-block-info? time u0)) }))))
+
+
+(define-data-var emergency-mode bool false)
+
+(define-public (emergency-withdraw)
+  (let ((user-stake (default-to u0 (get amount (map-get? stakers { staker: tx-sender })))))
+    (asserts! (var-get emergency-mode) (err u1))
+    (asserts! (> user-stake u0) (err u2))
+    (try! (contract-call? .token transfer tx-sender user-stake))
+    (map-delete stakers { staker: tx-sender })
+    (ok "Emergency withdrawal successful")))
+
