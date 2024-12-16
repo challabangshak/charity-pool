@@ -52,11 +52,11 @@ plan:
         - emulated-contract-publish:
             contract-name: token
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-            path: contracts/token.clar
+            path: "contracts\\token.clar"
             clarity-version: 2
         - emulated-contract-publish:
             contract-name: charity-pool
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-            path: contracts/charity-pool.clar
+            path: "contracts\\charity-pool.clar"
             clarity-version: 2
       epoch: "2.5"
