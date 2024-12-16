@@ -104,3 +104,23 @@
 (define-read-only (get-leaderboard (charity principal))
   (default-to { total: u0 } (map-get? leaderboard { contributor: charity })))
 
+
+(define-map staking-duration { staker: principal } { start-time: uint })
+
+(define-public (calculate-rewards (staker principal)) 
+  (let ((stake-start (default-to u0 (get start-time (map-get? staking-duration { staker: staker }))))
+        (current-time (unwrap-panic (get-block-info? time u0)))
+        (duration (- current-time stake-start))
+        (bonus-rate u5))
+    (ok (/ (* duration bonus-rate) u100))))
+
+
+(define-map verified-charities { charity: principal } { verified: bool, verification-date: uint })
+
+(define-public (verify-charity (charity principal))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set verified-charities 
+                 { charity: charity } 
+                 { verified: true, 
+                   verification-date: (unwrap-panic (get-block-info? time u0)) }))))
