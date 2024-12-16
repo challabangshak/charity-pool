@@ -150,3 +150,19 @@
   (let ((current-time (unwrap-panic (get-block-info? time u0))))
     (<= current-time (+ (var-get voting-period-start) (var-get voting-period-length)))))
 
+
+(define-map milestones 
+  { milestone-id: uint } 
+  { target: uint, reached: bool })
+
+(define-public (create-milestone (milestone-id uint) (target-amount uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set milestones 
+                 { milestone-id: milestone-id }
+                 { target: target-amount, reached: false }))))
+
+(define-read-only (check-milestone (milestone-id uint))
+  (let ((milestone (unwrap-panic (map-get? milestones { milestone-id: milestone-id })))
+        (current-total (get value (var-get total-donated))))
+    (>= current-total (get target milestone))))
