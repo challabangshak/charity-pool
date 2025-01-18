@@ -195,3 +195,22 @@
                  { charity: charity }
                  { category: category }))))
 
+
+;; Add to maps
+(define-map referrals 
+  { referrer: principal }
+  { total-referred: uint, bonus-earned: uint })
+
+;; Add function
+(define-public (stake-with-referral (amount uint) (referrer principal))
+  (begin
+    (try! (stake amount))
+    (let ((current-referrals (default-to { total-referred: u0, bonus-earned: u0 } 
+                            (map-get? referrals { referrer: referrer }))))
+      (map-set referrals 
+               { referrer: referrer }
+               { total-referred: (+ (get total-referred current-referrals) u1),
+                 bonus-earned: (+ (get bonus-earned current-referrals) amount) }))
+    (ok true)))
+
+
