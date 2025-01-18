@@ -253,3 +253,15 @@
                  { total-donated: (+ (get total-donated current-achievements) amount),
                    badges: (get badges current-achievements) }))))
 
+
+(define-map staking-tiers
+  { tier: uint }
+  { min-duration: uint, reward-multiplier: uint })
+
+(define-public (create-staking-tier (tier uint) (min-duration uint) (multiplier uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set staking-tiers
+                 { tier: tier }
+                 { min-duration: min-duration, reward-multiplier: multiplier }))))
+
