@@ -181,3 +181,17 @@
                  { duration: duration }
                  { multiplier: multiplier }))))
 
+
+;; Add new maps
+(define-map charity-categories 
+  { charity: principal }
+  { category: (string-ascii 32) })
+
+;; Add function
+(define-public (set-charity-category (charity principal) (category (string-ascii 32)))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set charity-categories 
+                 { charity: charity }
+                 { category: category }))))
+
