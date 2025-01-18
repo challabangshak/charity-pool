@@ -104,3 +104,65 @@
 (define-read-only (get-leaderboard (charity principal))
   (default-to { total: u0 } (map-get? leaderboard { contributor: charity })))
 
+
+(define-map staking-duration { staker: principal } { start-time: uint })
+
+(define-public (calculate-rewards (staker principal)) 
+  (let ((stake-start (default-to u0 (get start-time (map-get? staking-duration { staker: staker }))))
+        (current-time (unwrap-panic (get-block-info? time u0)))
+        (duration (- current-time stake-start))
+        (bonus-rate u5))
+    (ok (/ (* duration bonus-rate) u100))))
+
+
+(define-map verified-charities { charity: principal } { verified: bool, verification-date: uint })
+
+(define-public (verify-charity (charity principal))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set verified-charities 
+                 { charity: charity } 
+                 { verified: true, 
+                   verification-date: (unwrap-panic (get-block-info? time u0)) }))))
+
+
+(define-data-var emergency-mode bool false)
+
+(define-public (emergency-withdraw)
+  (let ((user-stake (default-to u0 (get amount (map-get? stakers { staker: tx-sender })))))
+    (asserts! (var-get emergency-mode) (err u1))
+    (asserts! (> user-stake u0) (err u2))
+    (try! (contract-call? .token transfer tx-sender user-stake))
+    (map-delete stakers { staker: tx-sender })
+    (ok "Emergency withdrawal successful")))
+
+
+(define-data-var voting-period-start uint u0)
+(define-data-var voting-period-length uint u1440) ;; 24 hours in blocks
+
+(define-public (start-voting-period)
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (var-set voting-period-start (unwrap-panic (get-block-info? time u0)))
+    (ok "Voting period started")))
+
+(define-read-only (is-voting-active)
+  (let ((current-time (unwrap-panic (get-block-info? time u0))))
+    (<= current-time (+ (var-get voting-period-start) (var-get voting-period-length)))))
+
+
+(define-map milestones 
+  { milestone-id: uint } 
+  { target: uint, reached: bool })
+
+(define-public (create-milestone (milestone-id uint) (target-amount uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set milestones 
+                 { milestone-id: milestone-id }
+                 { target: target-amount, reached: false }))))
+
+(define-read-only (check-milestone (milestone-id uint))
+  (let ((milestone (unwrap-panic (map-get? milestones { milestone-id: milestone-id })))
+        (current-total (get value (var-get total-donated))))
+    (>= current-total (get target milestone))))
