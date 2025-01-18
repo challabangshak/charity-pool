@@ -166,3 +166,18 @@
   (let ((milestone (unwrap-panic (map-get? milestones { milestone-id: milestone-id })))
         (current-total (get value (var-get total-donated))))
     (>= current-total (get target milestone))))
+
+
+;; Add to existing maps
+(define-map staking-multipliers 
+  { duration: uint }  ;; duration in blocks
+  { multiplier: uint })
+
+;; Add this function
+(define-public (set-duration-multiplier (duration uint) (multiplier uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set staking-multipliers 
+                 { duration: duration }
+                 { multiplier: multiplier }))))
+
