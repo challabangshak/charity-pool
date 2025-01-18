@@ -265,3 +265,25 @@
                  { tier: tier }
                  { min-duration: min-duration, reward-multiplier: multiplier }))))
 
+
+(define-map impact-metrics
+  { charity: principal }
+  { beneficiaries: uint,
+    projects-completed: uint,
+    total-impact-score: uint })
+
+(define-public (update-impact-metrics 
+    (charity principal)
+    (new-beneficiaries uint)
+    (completed-projects uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (let ((current-metrics (default-to
+                           { beneficiaries: u0, projects-completed: u0, total-impact-score: u0 }
+                           (map-get? impact-metrics { charity: charity }))))
+      (ok (map-set impact-metrics
+                   { charity: charity }
+                   { beneficiaries: (+ (get beneficiaries current-metrics) new-beneficiaries),
+                     projects-completed: (+ (get projects-completed current-metrics) completed-projects),
+                     total-impact-score: (+ (get total-impact-score current-metrics) 
+                                          (* new-beneficiaries completed-projects)) })))))
