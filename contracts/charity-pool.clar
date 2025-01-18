@@ -214,3 +214,14 @@
     (ok true)))
 
 
+
+;; Add to data vars
+(define-data-var monthly-goal uint u1000000)
+(define-data-var current-month-donations uint u0)
+
+;; Add function
+(define-public (update-monthly-stats (donation uint))
+  (begin
+    (var-set current-month-donations (+ (var-get current-month-donations) donation))
+    (ok (>= (var-get current-month-donations) (var-get monthly-goal)))))
+
