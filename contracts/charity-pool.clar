@@ -238,3 +238,18 @@
                  { charity: charity }
                  { match-percentage: match-percentage, pool-balance: u0 }))))
 
+
+
+(define-map donor-achievements 
+  { donor: principal }
+  { total-donated: uint, badges: (list 10 uint) })
+
+(define-public (check-and-award-achievement (donor principal) (amount uint))
+  (let ((current-achievements (default-to 
+                              { total-donated: u0, badges: (list ) }
+                              (map-get? donor-achievements { donor: donor }))))
+    (ok (map-set donor-achievements 
+                 { donor: donor }
+                 { total-donated: (+ (get total-donated current-achievements) amount),
+                   badges: (get badges current-achievements) }))))
+
