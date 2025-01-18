@@ -225,3 +225,16 @@
     (var-set current-month-donations (+ (var-get current-month-donations) donation))
     (ok (>= (var-get current-month-donations) (var-get monthly-goal)))))
 
+
+;; Add to maps
+(define-map matching-pools 
+  { charity: principal }
+  { match-percentage: uint, pool-balance: uint })
+
+(define-public (create-matching-pool (charity principal) (match-percentage uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set matching-pools 
+                 { charity: charity }
+                 { match-percentage: match-percentage, pool-balance: u0 }))))
+
