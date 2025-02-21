@@ -166,3 +166,124 @@
   (let ((milestone (unwrap-panic (map-get? milestones { milestone-id: milestone-id })))
         (current-total (get value (var-get total-donated))))
     (>= current-total (get target milestone))))
+
+
+;; Add to existing maps
+(define-map staking-multipliers 
+  { duration: uint }  ;; duration in blocks
+  { multiplier: uint })
+
+;; Add this function
+(define-public (set-duration-multiplier (duration uint) (multiplier uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set staking-multipliers 
+                 { duration: duration }
+                 { multiplier: multiplier }))))
+
+
+;; Add new maps
+(define-map charity-categories 
+  { charity: principal }
+  { category: (string-ascii 32) })
+
+;; Add function
+(define-public (set-charity-category (charity principal) (category (string-ascii 32)))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set charity-categories 
+                 { charity: charity }
+                 { category: category }))))
+
+
+;; Add to maps
+(define-map referrals 
+  { referrer: principal }
+  { total-referred: uint, bonus-earned: uint })
+
+;; Add function
+(define-public (stake-with-referral (amount uint) (referrer principal))
+  (begin
+    (try! (stake amount))
+    (let ((current-referrals (default-to { total-referred: u0, bonus-earned: u0 } 
+                            (map-get? referrals { referrer: referrer }))))
+      (map-set referrals 
+               { referrer: referrer }
+               { total-referred: (+ (get total-referred current-referrals) u1),
+                 bonus-earned: (+ (get bonus-earned current-referrals) amount) }))
+    (ok true)))
+
+
+
+;; Add to data vars
+(define-data-var monthly-goal uint u1000000)
+(define-data-var current-month-donations uint u0)
+
+;; Add function
+(define-public (update-monthly-stats (donation uint))
+  (begin
+    (var-set current-month-donations (+ (var-get current-month-donations) donation))
+    (ok (>= (var-get current-month-donations) (var-get monthly-goal)))))
+
+
+;; Add to maps
+(define-map matching-pools 
+  { charity: principal }
+  { match-percentage: uint, pool-balance: uint })
+
+(define-public (create-matching-pool (charity principal) (match-percentage uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set matching-pools 
+                 { charity: charity }
+                 { match-percentage: match-percentage, pool-balance: u0 }))))
+
+
+
+(define-map donor-achievements 
+  { donor: principal }
+  { total-donated: uint, badges: (list 10 uint) })
+
+(define-public (check-and-award-achievement (donor principal) (amount uint))
+  (let ((current-achievements (default-to 
+                              { total-donated: u0, badges: (list ) }
+                              (map-get? donor-achievements { donor: donor }))))
+    (ok (map-set donor-achievements 
+                 { donor: donor }
+                 { total-donated: (+ (get total-donated current-achievements) amount),
+                   badges: (get badges current-achievements) }))))
+
+
+(define-map staking-tiers
+  { tier: uint }
+  { min-duration: uint, reward-multiplier: uint })
+
+(define-public (create-staking-tier (tier uint) (min-duration uint) (multiplier uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set staking-tiers
+                 { tier: tier }
+                 { min-duration: min-duration, reward-multiplier: multiplier }))))
+
+
+(define-map impact-metrics
+  { charity: principal }
+  { beneficiaries: uint,
+    projects-completed: uint,
+    total-impact-score: uint })
+
+(define-public (update-impact-metrics 
+    (charity principal)
+    (new-beneficiaries uint)
+    (completed-projects uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (let ((current-metrics (default-to
+                           { beneficiaries: u0, projects-completed: u0, total-impact-score: u0 }
+                           (map-get? impact-metrics { charity: charity }))))
+      (ok (map-set impact-metrics
+                   { charity: charity }
+                   { beneficiaries: (+ (get beneficiaries current-metrics) new-beneficiaries),
+                     projects-completed: (+ (get projects-completed current-metrics) completed-projects),
+                     total-impact-score: (+ (get total-impact-score current-metrics) 
+                                          (* new-beneficiaries completed-projects)) })))))

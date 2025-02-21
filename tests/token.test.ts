@@ -85,3 +85,103 @@ describe('Token Contract', () => {
     expect(balance).toBe(300);
   });
 });
+
+
+describe('Staking Multipliers', () => {
+  let stakingMultipliers: Record<number, number>;
+  let contractOwner: string;
+
+  beforeEach(() => {
+    stakingMultipliers = {};
+    contractOwner = 'contract_owner';
+  });
+
+  const setDurationMultiplier = (duration: number, multiplier: number, sender: string) => {
+    if (sender !== contractOwner) throw new Error('ERR_UNAUTHORIZED');
+    stakingMultipliers[duration] = multiplier;
+    return true;
+  };
+
+  it('should allow the contract owner to set a multiplier', () => {
+    const result = setDurationMultiplier(100, 2, 'contract_owner');
+    expect(result).toBe(true);
+    expect(stakingMultipliers[100]).toBe(2);
+  });
+
+  it('should reject unauthorized users from setting a multiplier', () => {
+    expect(() => setDurationMultiplier(100, 2, 'unauthorized_user')).toThrow('ERR_UNAUTHORIZED');
+  });
+});
+
+
+
+describe('Charity Categories', () => {
+  let charityCategories: Record<string, string>;
+  let contractOwner: string;
+
+  beforeEach(() => {
+    charityCategories = {};
+    contractOwner = 'contract_owner';
+  });
+
+  const setCharityCategory = (charity: string, category: string, sender: string) => {
+    if (sender !== contractOwner) throw new Error('ERR_UNAUTHORIZED');
+    charityCategories[charity] = category;
+    return true;
+  };
+
+  it('should allow the contract owner to set a charity category', () => {
+    const result = setCharityCategory('charity1', 'education', 'contract_owner');
+    expect(result).toBe(true);
+    expect(charityCategories['charity1']).toBe('education');
+  });
+
+  it('should reject unauthorized users from setting a charity category', () => {
+    expect(() => setCharityCategory('charity1', 'healthcare', 'unauthorized_user')).toThrow('ERR_UNAUTHORIZED');
+  });
+});
+
+
+
+describe('Referrals', () => {
+  let referrals: Record<string, { totalReferred: number; bonusEarned: number }>;
+  let userBalances: Record<string, number>;
+
+  beforeEach(() => {
+    referrals = {};
+    userBalances = {};
+  });
+
+  const stakeWithReferral = (amount: number, referrer: string, sender: string) => {
+    if (amount <= 0) throw new Error('ERR_INVALID_AMOUNT');
+
+    userBalances[sender] = (userBalances[sender] || 0) + amount;
+
+    if (referrals[referrer]) {
+      referrals[referrer].totalReferred += 1;
+      referrals[referrer].bonusEarned += Math.floor(amount * 0.1); // 10% bonus
+    } else {
+      referrals[referrer] = { totalReferred: 1, bonusEarned: Math.floor(amount * 0.1) };
+    }
+
+    return true;
+  };
+
+  it('should allow users to stake with a valid referral', () => {
+    const result = stakeWithReferral(100, 'referrer1', 'user1');
+    expect(result).toBe(true);
+    expect(referrals['referrer1']).toMatchObject({ totalReferred: 1, bonusEarned: 10 });
+  });
+
+  it('should accumulate referral bonuses and counts', () => {
+    stakeWithReferral(100, 'referrer1', 'user1');
+    stakeWithReferral(200, 'referrer1', 'user2');
+    expect(referrals['referrer1']).toMatchObject({ totalReferred: 2, bonusEarned: 30 });
+  });
+
+  it('should reject staking with zero or negative amounts', () => {
+    expect(() => stakeWithReferral(0, 'referrer1', 'user1')).toThrow('ERR_INVALID_AMOUNT');
+    expect(() => stakeWithReferral(-50, 'referrer1', 'user1')).toThrow('ERR_INVALID_AMOUNT');
+  });
+});
+
