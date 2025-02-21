@@ -287,3 +287,117 @@
                      projects-completed: (+ (get projects-completed current-metrics) completed-projects),
                      total-impact-score: (+ (get total-impact-score current-metrics) 
                                           (* new-beneficiaries completed-projects)) })))))
+
+
+;; Add to existing maps
+(define-map time-locks 
+  { staker: principal }
+  { lock-period: uint, bonus-rate: uint })
+
+;; Add function
+(define-public (stake-with-timelock (amount uint) (lock-period uint))
+  (begin
+    (try! (stake amount))
+    (map-set time-locks 
+             { staker: tx-sender }
+             { lock-period: lock-period, bonus-rate: u5 })
+    (ok true)))
+
+
+
+(define-map project-proposals
+  { proposal-id: uint }
+  { charity: principal, 
+    description: (string-ascii 256),
+    funding-goal: uint,
+    votes: uint })
+
+(define-public (create-proposal 
+    (proposal-id uint)
+    (description (string-ascii 256))
+    (funding-goal uint))
+  (begin
+    (map-set project-proposals
+             { proposal-id: proposal-id }
+             { charity: tx-sender,
+               description: description,
+               funding-goal: funding-goal,
+               votes: u0 })
+    (ok true)))
+
+
+
+(define-map charity-verification
+  { charity: principal }
+  { status: (string-ascii 32),
+    documents: (list 5 (string-ascii 64)),
+    verified-by: principal })
+
+(define-public (submit-verification (documents (list 5 (string-ascii 64))))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set charity-verification
+                 { charity: tx-sender }
+                 { status: "pending",
+                   documents: documents,
+                   verified-by: contract-owner }))))
+
+
+
+(define-map impact-reports
+  { charity: principal }
+  { beneficiaries-reached: uint,
+    funds-utilized: uint,
+    report-uri: (string-ascii 256) })
+
+(define-public (submit-impact-report 
+    (beneficiaries uint)
+    (funds uint)
+    (report-uri (string-ascii 256)))
+  (begin
+    (asserts! (is-some (var-get charity-address)) (err u1))
+    (ok (map-set impact-reports
+                 { charity: tx-sender }
+                 { beneficiaries-reached: beneficiaries,
+                   funds-utilized: funds,
+                   report-uri: report-uri }))))
+
+
+
+(define-map recurring-donations
+  { donor: principal }
+  { amount: uint,
+    frequency: uint,
+    last-donation: uint })
+
+(define-public (setup-recurring-donation (amount uint) (frequency uint))
+  (begin
+    (asserts! (> amount u0) (err u1))
+    (ok (map-set recurring-donations
+                 { donor: tx-sender }
+                 { amount: amount,
+                   frequency: frequency,
+                   last-donation: (unwrap-panic (get-block-info? time u0)) }))))
+
+
+
+(define-map matching-funds
+  { campaign-id: uint }
+  { matcher: principal,
+    match-ratio: uint,
+    available-funds: uint })
+
+(define-public (create-matching-campaign 
+    (campaign-id uint)
+    (match-ratio uint)
+    (funds uint))
+  (begin
+    (try! (stake funds))
+    (ok (map-set matching-funds
+                 { campaign-id: campaign-id }
+                 { matcher: tx-sender,
+                   match-ratio: match-ratio,
+                   available-funds: funds }))))
+
+
+
