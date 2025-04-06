@@ -538,3 +538,315 @@
                { threshold: threshold,
                  reward-multiplier: multiplier,
                  claimed: false })))
+
+
+
+
+
+
+(define-map transparency-reports
+  { charity: principal, report-id: uint }
+  { title: (string-ascii 64), 
+    content-hash: (buff 32), 
+    timestamp: uint })
+
+(define-public (publish-transparency-report 
+    (report-id uint)
+    (title (string-ascii 64))
+    (content-hash (buff 32)))
+  (begin
+    (asserts! (is-some (var-get charity-address)) (err u400))
+    (ok (map-set transparency-reports
+                 { charity: tx-sender, report-id: report-id }
+                 { title: title,
+                   content-hash: content-hash,
+                   timestamp: (unwrap-panic (get-block-info? time u0)) }))))
+
+(define-read-only (get-transparency-report (charity principal) (report-id uint))
+  (map-get? transparency-reports { charity: charity, report-id: report-id }))
+
+
+
+(define-map funding-rounds
+  { round-id: uint }
+  { start-time: uint, 
+    end-time: uint, 
+    target-amount: uint, 
+    current-amount: uint, 
+    status: (string-ascii 16) })
+
+(define-data-var current-round-id uint u0)
+
+(define-public (create-funding-round 
+    (duration uint)
+    (target-amount uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u600))
+    (let ((round-id (+ (var-get current-round-id) u1))
+          (current-time (unwrap-panic (get-block-info? time u0))))
+      (var-set current-round-id round-id)
+      (ok (map-set funding-rounds
+                   { round-id: round-id }
+                   { start-time: current-time,
+                     end-time: (+ current-time duration),
+                     target-amount: target-amount,
+                     current-amount: u0,
+                     status: "active" })))))
+
+(define-public (contribute-to-round (round-id uint) (amount uint))
+  (let ((round (default-to 
+               { start-time: u0, end-time: u0, target-amount: u0, current-amount: u0, status: "inactive" }
+               (map-get? funding-rounds { round-id: round-id })))
+        (current-time (unwrap-panic (get-block-info? time u0))))
+    (asserts! (is-eq (get status round) "active") (err u601))
+    (asserts! (<= current-time (get end-time round)) (err u602))
+    (try! (stake amount))
+    (ok (map-set funding-rounds
+                 { round-id: round-id }
+                 { start-time: (get start-time round),
+                   end-time: (get end-time round),
+                   target-amount: (get target-amount round),
+                   current-amount: (+ (get current-amount round) amount),
+                   status: (get status round) }))))
+
+(define-read-only (get-funding-round (round-id uint))
+  (map-get? funding-rounds { round-id: round-id }))
+
+
+
+(define-map governance-proposals
+  { proposal-id: uint }
+  { title: (string-ascii 64), 
+    description: (string-ascii 256), 
+    proposer: principal, 
+    votes-for: uint, 
+    votes-against: uint, 
+    status: (string-ascii 16),
+    end-time: uint })
+
+(define-map governance-votes
+  { proposal-id: uint, voter: principal }
+  { vote: bool })
+
+(define-data-var proposal-counter uint u0)
+
+(define-public (create-governance-proposal 
+    (title (string-ascii 64))
+    (description (string-ascii 256))
+    (voting-period uint))
+  (let ((proposal-id (+ (var-get proposal-counter) u1))
+        (current-time (unwrap-panic (get-block-info? time u0))))
+    (var-set proposal-counter proposal-id)
+    (ok (map-set governance-proposals
+                 { proposal-id: proposal-id }
+                 { title: title,
+                   description: description,
+                   proposer: tx-sender,
+                   votes-for: u0,
+                   votes-against: u0,
+                   status: "active",
+                   end-time: (+ current-time voting-period) }))))
+
+(define-public (vote-on-proposal (proposal-id uint) (vote-for bool))
+  (let ((proposal (default-to 
+                  { title: "", description: "", proposer: tx-sender, 
+                    votes-for: u0, votes-against: u0, status: "inactive", end-time: u0 }
+                  (map-get? governance-proposals { proposal-id: proposal-id })))
+        (current-time (unwrap-panic (get-block-info? time u0)))
+        (staker-data (map-get? stakers { staker: tx-sender })))
+    (asserts! (is-eq (get status proposal) "active") (err u701))
+    (asserts! (<= current-time (get end-time proposal)) (err u702))
+    (asserts! (is-some staker-data) (err u703))
+    (asserts! (is-none (map-get? governance-votes { proposal-id: proposal-id, voter: tx-sender })) (err u704))
+    
+    (map-set governance-votes { proposal-id: proposal-id, voter: tx-sender } { vote: vote-for })
+    
+    (if vote-for
+        (map-set governance-proposals
+                 { proposal-id: proposal-id }
+                 { title: (get title proposal),
+                   description: (get description proposal),
+                   proposer: (get proposer proposal),
+                   votes-for: (+ (get votes-for proposal) u1),
+                   votes-against: (get votes-against proposal),
+                   status: (get status proposal),
+                   end-time: (get end-time proposal) })
+        (map-set governance-proposals
+                 { proposal-id: proposal-id }
+                 { title: (get title proposal),
+                   description: (get description proposal),
+                   proposer: (get proposer proposal),
+                   votes-for: (get votes-for proposal),
+                   votes-against: (+ (get votes-against proposal) u1),
+                   status: (get status proposal),
+                   end-time: (get end-time proposal) }))
+    (ok true)))
+
+(define-read-only (get-proposal (proposal-id uint))
+  (map-get? governance-proposals { proposal-id: proposal-id }))
+
+
+
+(define-map verification-tiers
+  { tier-id: uint }
+  { name: (string-ascii 32), 
+    requirements: (string-ascii 256) })
+
+(define-map charity-verification-tier
+  { charity: principal }
+  { tier-id: uint, 
+    verified-at: uint })
+
+(define-public (create-verification-tier 
+    (tier-id uint)
+    (name (string-ascii 32))
+    (requirements (string-ascii 256)))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u800))
+    (ok (map-set verification-tiers
+                 { tier-id: tier-id }
+                 { name: name,
+                   requirements: requirements }))))
+
+(define-public (assign-verification-tier (charity principal) (tier-id uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u801))
+    (ok (map-set charity-verification-tier
+                 { charity: charity }
+                 { tier-id: tier-id,
+                   verified-at: (unwrap-panic (get-block-info? time u0)) }))))
+
+(define-read-only (get-charity-verification-tier (charity principal))
+  (map-get? charity-verification-tier { charity: charity }))
+
+(define-read-only (get-verification-tier-details (tier-id uint))
+  (map-get? verification-tiers { tier-id: tier-id }))
+
+(define-map matching-campaigns
+  { campaign-id: uint }
+  { name: (string-ascii 64), 
+    sponsor: principal, 
+    match-ratio: uint, 
+    max-match: uint, 
+    remaining-funds: uint, 
+    start-time: uint, 
+    end-time: uint, 
+    status: (string-ascii 16) })
+
+(define-data-var campaign-counter uint u0)
+
+(define-public (create-matching-campaign-v2 
+    (name (string-ascii 64))
+    (match-ratio uint)
+    (max-match uint)
+    (duration uint)
+    (funds uint))
+  (let ((campaign-id (+ (var-get campaign-counter) u1))
+        (current-time (unwrap-panic (get-block-info? time u0))))
+    (try! (stake funds))
+    (var-set campaign-counter campaign-id)
+    (ok (map-set matching-campaigns
+                 { campaign-id: campaign-id }
+                 { name: name,
+                   sponsor: tx-sender,
+                   match-ratio: match-ratio,
+                   max-match: max-match,
+                   remaining-funds: funds,
+                   start-time: current-time,
+                   end-time: (+ current-time duration),
+                   status: "active" }))))
+
+(define-public (donate-with-matching (campaign-id uint) (amount uint))
+  (let ((campaign (default-to 
+                  { name: "", sponsor: tx-sender, match-ratio: u0, max-match: u0, 
+                    remaining-funds: u0, start-time: u0, end-time: u0, status: "inactive" }
+                  (map-get? matching-campaigns { campaign-id: campaign-id })))
+        (current-time (unwrap-panic (get-block-info? time u0))))
+    (asserts! (is-eq (get status campaign) "active") (err u901))
+    (asserts! (<= current-time (get end-time campaign)) (err u902))
+    
+    (try! (stake amount))
+    
+    (let ((match-amount (if (< (/ (* amount (get match-ratio campaign)) u100) 
+                              (get remaining-funds campaign))
+                           (/ (* amount (get match-ratio campaign)) u100)
+                           (get remaining-funds campaign))))
+      (map-set matching-campaigns
+               { campaign-id: campaign-id }
+               { name: (get name campaign),
+                 sponsor: (get sponsor campaign),
+                 match-ratio: (get match-ratio campaign),
+                 max-match: (get max-match campaign),
+                 remaining-funds: (- (get remaining-funds campaign) match-amount),
+                 start-time: (get start-time campaign),
+                 end-time: (get end-time campaign),
+                 status: (get status campaign) })
+      (ok match-amount))))
+(define-read-only (get-matching-campaign (campaign-id uint))
+  (map-get? matching-campaigns { campaign-id: campaign-id }))
+
+
+  (define-map charity-projects
+  { project-id: uint }
+  { charity: principal, 
+    title: (string-ascii 64), 
+    description: (string-ascii 256), 
+    funding-goal: uint, 
+    current-funding: uint, 
+    status: (string-ascii 16),
+    created-at: uint })
+
+(define-map project-milestones
+  { project-id: uint, milestone-id: uint }
+  { title: (string-ascii 64), 
+    description: (string-ascii 256), 
+    target-date: uint, 
+    completed: bool })
+
+(define-data-var project-counter uint u0)
+
+(define-public (create-charity-project 
+    (title (string-ascii 64))
+    (description (string-ascii 256))
+    (funding-goal uint))
+  (let ((project-id (+ (var-get project-counter) u1))
+        (current-time (unwrap-panic (get-block-info? time u0))))
+    (var-set project-counter project-id)
+    (ok (map-set charity-projects
+                 { project-id: project-id }
+                 { charity: tx-sender,
+                   title: title,
+                   description: description,
+                   funding-goal: funding-goal,
+                   current-funding: u0,
+                   status: "active",
+                   created-at: current-time }))))
+
+(define-public (add-project-milestone 
+    (project-id uint)
+    (milestone-id uint)
+    (title (string-ascii 64))
+    (description (string-ascii 256))
+    (target-date uint))
+  (let ((project (map-get? charity-projects { project-id: project-id })))
+    (asserts! (is-some project) (err u1001))
+    (asserts! (is-eq tx-sender (get charity (unwrap-panic project))) (err u1002))
+    (ok (map-set project-milestones
+                 { project-id: project-id, milestone-id: milestone-id }
+                 { title: title,
+                   description: description,
+                   target-date: target-date,
+                   completed: false }))))
+
+(define-public (complete-project-milestone (project-id uint) (milestone-id uint))
+  (let ((project (map-get? charity-projects { project-id: project-id }))
+        (milestone (map-get? project-milestones { project-id: project-id, milestone-id: milestone-id })))
+    (asserts! (is-some project) (err u1003))
+    (asserts! (is-some milestone) (err u1004))
+    (asserts! (is-eq tx-sender (get charity (unwrap-panic project))) (err u1005))
+    (ok (map-set project-milestones
+                 { project-id: project-id, milestone-id: milestone-id }
+                 { title: (get title (unwrap-panic milestone)),
+                   description: (get description (unwrap-panic milestone)),
+                   target-date: (get target-date (unwrap-panic milestone)),
+                   completed: true }))))
