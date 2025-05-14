@@ -850,3 +850,108 @@
                    description: (get description (unwrap-panic milestone)),
                    target-date: (get target-date (unwrap-panic milestone)),
                    completed: true }))))
+                
+
+(define-map certificate-data 
+  { token-id: uint }
+  { donor: principal, amount: uint, charity: principal, timestamp: uint })
+
+(define-data-var last-token-id uint u0)
+
+(define-public (mint-certificate (amount uint) (charity principal))
+  (let ((token-id (+ (var-get last-token-id) u1)))
+    (var-set last-token-id token-id)
+    (map-set certificate-data
+      { token-id: token-id }
+      { donor: tx-sender,
+        amount: amount,
+        charity: charity,
+        timestamp: (unwrap-panic (get-block-info? time u0)) })
+    (ok token-id)))
+
+(define-read-only (get-token-uri (token-id uint))
+  (ok (some "https://api.charity-pool.org/certificate/")))
+
+(define-read-only (get-owner (token-id uint))
+  (ok (get donor (unwrap-panic (map-get? certificate-data { token-id: token-id })))))
+
+(define-read-only (get-certificate-details (token-id uint))
+  (map-get? certificate-data { token-id: token-id }))
+
+
+(define-map charity-needs
+  { charity: principal }
+  { urgency-level: uint,
+    current-goal: uint,
+    category: (string-ascii 32) })
+
+(define-map routing-weights
+  { category: (string-ascii 32) }
+  { weight: uint })
+
+(define-public (register-charity-need 
+    (urgency uint)
+    (goal uint)
+    (category (string-ascii 32)))
+  (ok (map-set charity-needs
+    { charity: tx-sender }
+    { urgency-level: urgency,
+      current-goal: goal,
+      category: category })))
+
+
+(define-private (check-charity-eligibility (charity-data { charity: principal }))
+  (let ((needs (unwrap-panic (map-get? charity-needs { charity: (get charity charity-data) }))))
+    (> (get urgency-level needs) u7)))
+
+
+
+(define-map league-seasons 
+    { season-id: uint }
+    { start-block: uint,
+     end-block: uint,
+     prize-pool: uint,
+     status: (string-ascii 16) })
+
+(define-map charity-performance
+    { season-id: uint, charity: principal }
+    { donor-count: uint,
+     total-raised: uint,
+     milestones-hit: uint,
+     score: uint })
+
+(define-data-var current-season-id uint u0)
+(define-data-var blocks-per-season uint u10000)
+
+(define-public (start-new-season (prize-pool uint))
+    (let ((season-id (+ (var-get current-season-id) u1))
+          (current-block block-height))
+        (try! (stake prize-pool))
+        (var-set current-season-id season-id)
+        (ok (map-set league-seasons
+            { season-id: season-id }
+            { start-block: current-block,
+              end-block: (+ current-block (var-get blocks-per-season)),
+              prize-pool: prize-pool,
+              status: "active" }))))
+
+(define-public (record-charity-activity 
+    (charity principal) 
+    (donation-amount uint)
+    (mileston uint))
+    (let ((season-id (var-get current-season-id))
+          (current-stats (default-to 
+            { donor-count: u0, total-raised: u0, milestones-hit: u0, score: u0 }
+            (map-get? charity-performance { season-id: season-id, charity: charity }))))
+        (ok (map-set charity-performance
+            { season-id: season-id, charity: charity }
+            { donor-count: (+ (get donor-count current-stats) u1),
+              total-raised: (+ (get total-raised current-stats) donation-amount),
+              milestones-hit: (+ (get milestones-hit current-stats) mileston),
+              score: (calculate-score donation-amount mileston) }))))
+
+(define-private (calculate-score (amount uint) (milestone uint))
+    (+ (* amount u2) (* milestone u1000)))
+
+(define-read-only (get-charity-ranking (season-id uint) (charity principal))
+    (map-get? charity-performance { season-id: season-id, charity: charity }))
