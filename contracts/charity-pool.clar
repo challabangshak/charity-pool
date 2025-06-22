@@ -955,3 +955,152 @@
 
 (define-read-only (get-charity-ranking (season-id uint) (charity principal))
     (map-get? charity-performance { season-id: season-id, charity: charity }))
+
+ (define-map donation-streams
+  { stream-id: uint }
+  { donor: principal,
+    charity: principal,
+    rate-per-block: uint,
+    total-amount: uint,
+    amount-streamed: uint,
+    start-block: uint,
+    end-block: uint,
+    last-claim-block: uint,
+    active: bool })
+
+(define-map donor-stream-balance
+  { donor: principal }
+  { deposited: uint,
+    available: uint })
+
+(define-data-var stream-counter uint u0)
+
+(define-public (create-donation-stream 
+    (charity principal)
+    (total-amount uint)
+    (duration-blocks uint))
+  (let ((stream-id (+ (var-get stream-counter) u1))
+        (current-block block-height)
+        (rate (/ total-amount duration-blocks)))
+    (asserts! (> total-amount u0) (err u1100))
+    (asserts! (> duration-blocks u0) (err u1101))
+    (asserts! (> rate u0) (err u1102))
+    
+    (try! (contract-call? .token transfer (as-contract tx-sender) total-amount))
+    
+    (let ((current-balance (default-to { deposited: u0, available: u0 }
+                          (map-get? donor-stream-balance { donor: tx-sender }))))
+      (map-set donor-stream-balance
+        { donor: tx-sender }
+        { deposited: (+ (get deposited current-balance) total-amount),
+          available: (+ (get available current-balance) total-amount) }))
+    
+    (var-set stream-counter stream-id)
+    (map-set donation-streams
+      { stream-id: stream-id }
+      { donor: tx-sender,
+        charity: charity,
+        rate-per-block: rate,
+        total-amount: total-amount,
+        amount-streamed: u0,
+        start-block: current-block,
+        end-block: (+ current-block duration-blocks),
+        last-claim-block: current-block,
+        active: true })
+    (ok stream-id)))
+
+(define-public (claim-stream-donations (stream-id uint))
+  (let ((stream (unwrap! (map-get? donation-streams { stream-id: stream-id }) (err u1103))))
+    (asserts! (get active stream) (err u1104))
+    (asserts! (<= block-height (get end-block stream)) (err u1105))
+    
+    (let ((blocks-elapsed (- block-height (get last-claim-block stream)))
+          (claimable-amount (* blocks-elapsed (get rate-per-block stream)))
+          (remaining-amount (- (get total-amount stream) (get amount-streamed stream))))
+      
+      (let ((actual-claim (if (> claimable-amount remaining-amount) 
+                            remaining-amount 
+                            claimable-amount)))
+        
+        (asserts! (> actual-claim u0) (err u1106))
+        
+        (try! (contract-call? .token transfer (get charity stream) actual-claim))
+        
+        (let ((donor-balance (unwrap-panic (map-get? donor-stream-balance { donor: (get donor stream) }))))
+          (map-set donor-stream-balance
+            { donor: (get donor stream) }
+            { deposited: (get deposited donor-balance),
+              available: (- (get available donor-balance) actual-claim) }))
+        
+        (let ((new-amount-streamed (+ (get amount-streamed stream) actual-claim))
+              (stream-completed (>= new-amount-streamed (get total-amount stream))))
+          
+          (map-set donation-streams
+            { stream-id: stream-id }
+            { donor: (get donor stream),
+              charity: (get charity stream),
+              rate-per-block: (get rate-per-block stream),
+              total-amount: (get total-amount stream),
+              amount-streamed: new-amount-streamed,
+              start-block: (get start-block stream),
+              end-block: (get end-block stream),
+              last-claim-block: block-height,
+              active: (not stream-completed) }))
+        
+        (ok actual-claim)))))
+
+(define-public (cancel-donation-stream (stream-id uint))
+  (let ((stream (unwrap! (map-get? donation-streams { stream-id: stream-id }) (err u1107))))
+    (asserts! (is-eq tx-sender (get donor stream)) (err u1108))
+    (asserts! (get active stream) (err u1109))
+    
+    (let ((remaining-amount (- (get total-amount stream) (get amount-streamed stream))))
+      (asserts! (> remaining-amount u0) (err u1110))
+      
+      (try! (contract-call? .token transfer tx-sender remaining-amount))
+      
+      (let ((donor-balance (unwrap-panic (map-get? donor-stream-balance { donor: tx-sender }))))
+        (map-set donor-stream-balance
+          { donor: tx-sender }
+          { deposited: (- (get deposited donor-balance) remaining-amount),
+            available: (- (get available donor-balance) remaining-amount) }))
+      
+      (map-set donation-streams
+        { stream-id: stream-id }
+        { donor: (get donor stream),
+          charity: (get charity stream),
+          rate-per-block: (get rate-per-block stream),
+          total-amount: (get total-amount stream),
+          amount-streamed: (get amount-streamed stream),
+          start-block: (get start-block stream),
+          end-block: (get end-block stream),
+          last-claim-block: (get last-claim-block stream),
+          active: false })
+      
+      (ok remaining-amount))))
+
+(define-read-only (get-stream-details (stream-id uint))
+  (map-get? donation-streams { stream-id: stream-id }))
+
+(define-read-only (get-claimable-amount (stream-id uint))
+  (let ((stream (unwrap! (map-get? donation-streams { stream-id: stream-id }) (err u1111))))
+    (if (get active stream)
+      (let ((blocks-elapsed (- block-height (get last-claim-block stream)))
+            (claimable-amount (* blocks-elapsed (get rate-per-block stream)))
+            (remaining-amount (- (get total-amount stream) (get amount-streamed stream))))
+        (ok (if (> claimable-amount remaining-amount) remaining-amount claimable-amount)))
+      (ok u0))))
+
+(define-read-only (get-donor-stream-balance (donor principal))
+  (default-to { deposited: u0, available: u0 }
+    (map-get? donor-stream-balance { donor: donor })))
+
+(define-public (batch-claim-streams (stream-ids (list 10 uint)))
+  (fold claim-single-stream stream-ids (ok u0)))
+
+(define-private (claim-single-stream (stream-id uint) (previous-result (response uint uint)))
+  (match previous-result
+    success (match (claim-stream-donations stream-id)
+              claim-success (ok (+ success claim-success))
+              claim-error (err claim-error))
+    error (err error))) 
