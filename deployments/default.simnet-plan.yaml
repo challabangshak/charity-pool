@@ -60,3 +60,16 @@ plan:
             path: "contracts\\charity-pool.clar"
             clarity-version: 2
       epoch: "2.5"
+    - id: 1
+      transactions:
+        - emulated-contract-publish:
+            contract-name: dispute-resolver
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: "contracts\\dispute-resolver.clar"
+            clarity-version: 3
+        - emulated-contract-publish:
+            contract-name: impact-verifier
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: "contracts\\impact-verifier.clar"
+            clarity-version: 3
+      epoch: "3.1"

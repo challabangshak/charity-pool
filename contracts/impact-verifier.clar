@@ -158,9 +158,7 @@
                            u0))))
       
       (let ((reward-amount (/ (* (get stake-amount verifier-stake) accuracy) u100)))
-        ;; (if (> reward-amount u0)
-        ;;     (try! (contract-call? .token transfer tx-sender reward-amount))
-        ;;     (ok u0))
+       
         
         (map-set verifier-stakes
           { verifier: tx-sender, claim-id: claim-id }
