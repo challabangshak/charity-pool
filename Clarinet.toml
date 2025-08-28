@@ -24,6 +24,11 @@ epoch = 2.5
 path = 'contracts/dispute-resolver.clar'
 clarity_version = 3
 epoch = 3.1
+
+[contracts.donor-badge]
+path = 'contracts/donor-badge.clar'
+clarity_version = 3
+epoch = 3.1
 [repl.analysis]
 passes = ['check_checker']
 
