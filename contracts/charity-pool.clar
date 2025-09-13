@@ -287,3 +287,820 @@
                      projects-completed: (+ (get projects-completed current-metrics) completed-projects),
                      total-impact-score: (+ (get total-impact-score current-metrics) 
                                           (* new-beneficiaries completed-projects)) })))))
+
+
+;; Add to existing maps
+(define-map time-locks 
+  { staker: principal }
+  { lock-period: uint, bonus-rate: uint })
+
+;; Add function
+(define-public (stake-with-timelock (amount uint) (lock-period uint))
+  (begin
+    (try! (stake amount))
+    (map-set time-locks 
+             { staker: tx-sender }
+             { lock-period: lock-period, bonus-rate: u5 })
+    (ok true)))
+
+
+
+(define-map project-proposals
+  { proposal-id: uint }
+  { charity: principal, 
+    description: (string-ascii 256),
+    funding-goal: uint,
+    votes: uint })
+
+(define-public (create-proposal 
+    (proposal-id uint)
+    (description (string-ascii 256))
+    (funding-goal uint))
+  (begin
+    (map-set project-proposals
+             { proposal-id: proposal-id }
+             { charity: tx-sender,
+               description: description,
+               funding-goal: funding-goal,
+               votes: u0 })
+    (ok true)))
+
+
+
+(define-map charity-verification
+  { charity: principal }
+  { status: (string-ascii 32),
+    documents: (list 5 (string-ascii 64)),
+    verified-by: principal })
+
+(define-public (submit-verification (documents (list 5 (string-ascii 64))))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u1))
+    (ok (map-set charity-verification
+                 { charity: tx-sender }
+                 { status: "pending",
+                   documents: documents,
+                   verified-by: contract-owner }))))
+
+
+
+(define-map impact-reports
+  { charity: principal }
+  { beneficiaries-reached: uint,
+    funds-utilized: uint,
+    report-uri: (string-ascii 256) })
+
+(define-public (submit-impact-report 
+    (beneficiaries uint)
+    (funds uint)
+    (report-uri (string-ascii 256)))
+  (begin
+    (asserts! (is-some (var-get charity-address)) (err u1))
+    (ok (map-set impact-reports
+                 { charity: tx-sender }
+                 { beneficiaries-reached: beneficiaries,
+                   funds-utilized: funds,
+                   report-uri: report-uri }))))
+
+
+
+(define-map recurring-donations
+  { donor: principal }
+  { amount: uint,
+    frequency: uint,
+    last-donation: uint })
+
+(define-public (setup-recurring-donation (amount uint) (frequency uint))
+  (begin
+    (asserts! (> amount u0) (err u1))
+    (ok (map-set recurring-donations
+                 { donor: tx-sender }
+                 { amount: amount,
+                   frequency: frequency,
+                   last-donation: (unwrap-panic (get-block-info? time u0)) }))))
+
+
+
+(define-map matching-funds
+  { campaign-id: uint }
+  { matcher: principal,
+    match-ratio: uint,
+    available-funds: uint })
+
+(define-public (create-matching-campaign 
+    (campaign-id uint)
+    (match-ratio uint)
+    (funds uint))
+  (begin
+    (try! (stake funds))
+    (ok (map-set matching-funds
+                 { campaign-id: campaign-id }
+                 { matcher: tx-sender,
+                   match-ratio: match-ratio,
+                   available-funds: funds }))))
+
+
+
+(define-map charity-events 
+  { event-id: uint } 
+  { name: (string-ascii 64),
+    target: uint,
+    start-time: uint,
+    end-time: uint,
+    status: (string-ascii 16) })
+
+(define-public (create-charity-event 
+    (event-id uint)
+    (name (string-ascii 64))
+    (target uint)
+    (duration uint))
+  (let ((current-time (unwrap-panic (get-block-info? time u0))))
+    (ok (map-set charity-events
+                 { event-id: event-id }
+                 { name: name,
+                   target: target,
+                   start-time: current-time,
+                   end-time: (+ current-time duration),
+                   status: "active" }))))
+
+
+
+(define-map donor-rewards
+  { donor: principal }
+  { points: uint,
+    tier: (string-ascii 16) })
+
+(define-public (award-donor-points (amount uint))
+  (let ((current-rewards (default-to { points: u0, tier: "bronze" }
+                        (map-get? donor-rewards { donor: tx-sender }))))
+    (ok (map-set donor-rewards
+                 { donor: tx-sender }
+                 { points: (+ (get points current-rewards) amount),
+                   tier: (calculate-tier amount) }))))
+
+(define-private (calculate-tier (points uint))
+  (if (>= points u10000)
+      "platinum"
+      (if (>= points u5000)
+          "gold"
+          (if (>= points u1000)
+              "silver"
+              "bronze"))))
+
+
+
+(define-data-var emergency-fund-balance uint u0)
+(define-data-var emergency-threshold uint u1000)
+
+(define-public (contribute-to-emergency-fund (amount uint))
+  (begin
+    (try! (stake amount))
+    (var-set emergency-fund-balance (+ (var-get emergency-fund-balance) amount))
+    (ok true)))
+
+(define-public (request-emergency-funds (amount uint))
+  (begin
+    (asserts! (>= (var-get emergency-fund-balance) amount) (err u1))
+    (var-set emergency-fund-balance (- (var-get emergency-fund-balance) amount))
+    (ok true)))
+
+
+
+(define-map charity-collaborations
+  { collaboration-id: uint }
+  { charities: (list 5 principal),
+    goal: uint,
+    status: (string-ascii 16) })
+
+(define-public (create-collaboration 
+    (collaboration-id uint)
+    (partners (list 5 principal))
+    (goal uint))
+  (ok (map-set charity-collaborations
+               { collaboration-id: collaboration-id }
+               { charities: partners,
+                 goal: goal,
+                 status: "active" })))
+
+
+
+
+(define-map donor-messages
+  { message-id: uint }
+  { sender: principal,
+    message: (string-ascii 256),
+    timestamp: uint })
+
+(define-public (post-donor-message 
+    (message-id uint)
+    (message-text (string-ascii 256)))
+  (ok (map-set donor-messages
+               { message-id: message-id }
+               { sender: tx-sender,
+                 message: message-text,
+                 timestamp: (unwrap-panic (get-block-info? time u0)) })))
+
+
+
+
+(define-map charity-ratings
+  { charity: principal }
+  { total-score: uint,
+    num-ratings: uint,
+    average: uint })
+
+(define-public (rate-charity 
+    (charity principal)
+    (score uint))
+  (let ((current-rating (default-to
+                        { total-score: u0, num-ratings: u0, average: u0 }
+                        (map-get? charity-ratings { charity: charity }))))
+    (ok (map-set charity-ratings
+                 { charity: charity }
+                 { total-score: (+ (get total-score current-rating) score),
+                   num-ratings: (+ (get num-ratings current-rating) u1),
+                   average: (/ (+ (get total-score current-rating) score)
+                             (+ (get num-ratings current-rating) u1)) }))))
+
+
+(define-map milestone-rewards
+  { milestone-id: uint }
+  { threshold: uint,
+    reward-multiplier: uint,
+    claimed: bool })
+
+(define-public (create-milestone-reward 
+    (milestone-id uint)
+    (threshold uint)
+    (multiplier uint))
+  (ok (map-set milestone-rewards
+               { milestone-id: milestone-id }
+               { threshold: threshold,
+                 reward-multiplier: multiplier,
+                 claimed: false })))
+
+
+
+
+
+
+(define-map transparency-reports
+  { charity: principal, report-id: uint }
+  { title: (string-ascii 64), 
+    content-hash: (buff 32), 
+    timestamp: uint })
+
+(define-public (publish-transparency-report 
+    (report-id uint)
+    (title (string-ascii 64))
+    (content-hash (buff 32)))
+  (begin
+    (asserts! (is-some (var-get charity-address)) (err u400))
+    (ok (map-set transparency-reports
+                 { charity: tx-sender, report-id: report-id }
+                 { title: title,
+                   content-hash: content-hash,
+                   timestamp: (unwrap-panic (get-block-info? time u0)) }))))
+
+(define-read-only (get-transparency-report (charity principal) (report-id uint))
+  (map-get? transparency-reports { charity: charity, report-id: report-id }))
+
+
+
+(define-map funding-rounds
+  { round-id: uint }
+  { start-time: uint, 
+    end-time: uint, 
+    target-amount: uint, 
+    current-amount: uint, 
+    status: (string-ascii 16) })
+
+(define-data-var current-round-id uint u0)
+
+(define-public (create-funding-round 
+    (duration uint)
+    (target-amount uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u600))
+    (let ((round-id (+ (var-get current-round-id) u1))
+          (current-time (unwrap-panic (get-block-info? time u0))))
+      (var-set current-round-id round-id)
+      (ok (map-set funding-rounds
+                   { round-id: round-id }
+                   { start-time: current-time,
+                     end-time: (+ current-time duration),
+                     target-amount: target-amount,
+                     current-amount: u0,
+                     status: "active" })))))
+
+(define-public (contribute-to-round (round-id uint) (amount uint))
+  (let ((round (default-to 
+               { start-time: u0, end-time: u0, target-amount: u0, current-amount: u0, status: "inactive" }
+               (map-get? funding-rounds { round-id: round-id })))
+        (current-time (unwrap-panic (get-block-info? time u0))))
+    (asserts! (is-eq (get status round) "active") (err u601))
+    (asserts! (<= current-time (get end-time round)) (err u602))
+    (try! (stake amount))
+    (ok (map-set funding-rounds
+                 { round-id: round-id }
+                 { start-time: (get start-time round),
+                   end-time: (get end-time round),
+                   target-amount: (get target-amount round),
+                   current-amount: (+ (get current-amount round) amount),
+                   status: (get status round) }))))
+
+(define-read-only (get-funding-round (round-id uint))
+  (map-get? funding-rounds { round-id: round-id }))
+
+
+
+(define-map governance-proposals
+  { proposal-id: uint }
+  { title: (string-ascii 64), 
+    description: (string-ascii 256), 
+    proposer: principal, 
+    votes-for: uint, 
+    votes-against: uint, 
+    status: (string-ascii 16),
+    end-time: uint })
+
+(define-map governance-votes
+  { proposal-id: uint, voter: principal }
+  { vote: bool })
+
+(define-data-var proposal-counter uint u0)
+
+(define-public (create-governance-proposal 
+    (title (string-ascii 64))
+    (description (string-ascii 256))
+    (voting-period uint))
+  (let ((proposal-id (+ (var-get proposal-counter) u1))
+        (current-time (unwrap-panic (get-block-info? time u0))))
+    (var-set proposal-counter proposal-id)
+    (ok (map-set governance-proposals
+                 { proposal-id: proposal-id }
+                 { title: title,
+                   description: description,
+                   proposer: tx-sender,
+                   votes-for: u0,
+                   votes-against: u0,
+                   status: "active",
+                   end-time: (+ current-time voting-period) }))))
+
+(define-public (vote-on-proposal (proposal-id uint) (vote-for bool))
+  (let ((proposal (default-to 
+                  { title: "", description: "", proposer: tx-sender, 
+                    votes-for: u0, votes-against: u0, status: "inactive", end-time: u0 }
+                  (map-get? governance-proposals { proposal-id: proposal-id })))
+        (current-time (unwrap-panic (get-block-info? time u0)))
+        (staker-data (map-get? stakers { staker: tx-sender })))
+    (asserts! (is-eq (get status proposal) "active") (err u701))
+    (asserts! (<= current-time (get end-time proposal)) (err u702))
+    (asserts! (is-some staker-data) (err u703))
+    (asserts! (is-none (map-get? governance-votes { proposal-id: proposal-id, voter: tx-sender })) (err u704))
+    
+    (map-set governance-votes { proposal-id: proposal-id, voter: tx-sender } { vote: vote-for })
+    
+    (if vote-for
+        (map-set governance-proposals
+                 { proposal-id: proposal-id }
+                 { title: (get title proposal),
+                   description: (get description proposal),
+                   proposer: (get proposer proposal),
+                   votes-for: (+ (get votes-for proposal) u1),
+                   votes-against: (get votes-against proposal),
+                   status: (get status proposal),
+                   end-time: (get end-time proposal) })
+        (map-set governance-proposals
+                 { proposal-id: proposal-id }
+                 { title: (get title proposal),
+                   description: (get description proposal),
+                   proposer: (get proposer proposal),
+                   votes-for: (get votes-for proposal),
+                   votes-against: (+ (get votes-against proposal) u1),
+                   status: (get status proposal),
+                   end-time: (get end-time proposal) }))
+    (ok true)))
+
+(define-read-only (get-proposal (proposal-id uint))
+  (map-get? governance-proposals { proposal-id: proposal-id }))
+
+
+
+(define-map verification-tiers
+  { tier-id: uint }
+  { name: (string-ascii 32), 
+    requirements: (string-ascii 256) })
+
+(define-map charity-verification-tier
+  { charity: principal }
+  { tier-id: uint, 
+    verified-at: uint })
+
+(define-public (create-verification-tier 
+    (tier-id uint)
+    (name (string-ascii 32))
+    (requirements (string-ascii 256)))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u800))
+    (ok (map-set verification-tiers
+                 { tier-id: tier-id }
+                 { name: name,
+                   requirements: requirements }))))
+
+(define-public (assign-verification-tier (charity principal) (tier-id uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) (err u801))
+    (ok (map-set charity-verification-tier
+                 { charity: charity }
+                 { tier-id: tier-id,
+                   verified-at: (unwrap-panic (get-block-info? time u0)) }))))
+
+(define-read-only (get-charity-verification-tier (charity principal))
+  (map-get? charity-verification-tier { charity: charity }))
+
+(define-read-only (get-verification-tier-details (tier-id uint))
+  (map-get? verification-tiers { tier-id: tier-id }))
+
+(define-map matching-campaigns
+  { campaign-id: uint }
+  { name: (string-ascii 64), 
+    sponsor: principal, 
+    match-ratio: uint, 
+    max-match: uint, 
+    remaining-funds: uint, 
+    start-time: uint, 
+    end-time: uint, 
+    status: (string-ascii 16) })
+
+(define-data-var campaign-counter uint u0)
+
+(define-public (create-matching-campaign-v2 
+    (name (string-ascii 64))
+    (match-ratio uint)
+    (max-match uint)
+    (duration uint)
+    (funds uint))
+  (let ((campaign-id (+ (var-get campaign-counter) u1))
+        (current-time (unwrap-panic (get-block-info? time u0))))
+    (try! (stake funds))
+    (var-set campaign-counter campaign-id)
+    (ok (map-set matching-campaigns
+                 { campaign-id: campaign-id }
+                 { name: name,
+                   sponsor: tx-sender,
+                   match-ratio: match-ratio,
+                   max-match: max-match,
+                   remaining-funds: funds,
+                   start-time: current-time,
+                   end-time: (+ current-time duration),
+                   status: "active" }))))
+
+(define-public (donate-with-matching (campaign-id uint) (amount uint))
+  (let ((campaign (default-to 
+                  { name: "", sponsor: tx-sender, match-ratio: u0, max-match: u0, 
+                    remaining-funds: u0, start-time: u0, end-time: u0, status: "inactive" }
+                  (map-get? matching-campaigns { campaign-id: campaign-id })))
+        (current-time (unwrap-panic (get-block-info? time u0))))
+    (asserts! (is-eq (get status campaign) "active") (err u901))
+    (asserts! (<= current-time (get end-time campaign)) (err u902))
+    
+    (try! (stake amount))
+    
+    (let ((match-amount (if (< (/ (* amount (get match-ratio campaign)) u100) 
+                              (get remaining-funds campaign))
+                           (/ (* amount (get match-ratio campaign)) u100)
+                           (get remaining-funds campaign))))
+      (map-set matching-campaigns
+               { campaign-id: campaign-id }
+               { name: (get name campaign),
+                 sponsor: (get sponsor campaign),
+                 match-ratio: (get match-ratio campaign),
+                 max-match: (get max-match campaign),
+                 remaining-funds: (- (get remaining-funds campaign) match-amount),
+                 start-time: (get start-time campaign),
+                 end-time: (get end-time campaign),
+                 status: (get status campaign) })
+      (ok match-amount))))
+(define-read-only (get-matching-campaign (campaign-id uint))
+  (map-get? matching-campaigns { campaign-id: campaign-id }))
+
+
+  (define-map charity-projects
+  { project-id: uint }
+  { charity: principal, 
+    title: (string-ascii 64), 
+    description: (string-ascii 256), 
+    funding-goal: uint, 
+    current-funding: uint, 
+    status: (string-ascii 16),
+    created-at: uint })
+
+(define-map project-milestones
+  { project-id: uint, milestone-id: uint }
+  { title: (string-ascii 64), 
+    description: (string-ascii 256), 
+    target-date: uint, 
+    completed: bool })
+
+(define-data-var project-counter uint u0)
+
+(define-public (create-charity-project 
+    (title (string-ascii 64))
+    (description (string-ascii 256))
+    (funding-goal uint))
+  (let ((project-id (+ (var-get project-counter) u1))
+        (current-time (unwrap-panic (get-block-info? time u0))))
+    (var-set project-counter project-id)
+    (ok (map-set charity-projects
+                 { project-id: project-id }
+                 { charity: tx-sender,
+                   title: title,
+                   description: description,
+                   funding-goal: funding-goal,
+                   current-funding: u0,
+                   status: "active",
+                   created-at: current-time }))))
+
+(define-public (add-project-milestone 
+    (project-id uint)
+    (milestone-id uint)
+    (title (string-ascii 64))
+    (description (string-ascii 256))
+    (target-date uint))
+  (let ((project (map-get? charity-projects { project-id: project-id })))
+    (asserts! (is-some project) (err u1001))
+    (asserts! (is-eq tx-sender (get charity (unwrap-panic project))) (err u1002))
+    (ok (map-set project-milestones
+                 { project-id: project-id, milestone-id: milestone-id }
+                 { title: title,
+                   description: description,
+                   target-date: target-date,
+                   completed: false }))))
+
+(define-public (complete-project-milestone (project-id uint) (milestone-id uint))
+  (let ((project (map-get? charity-projects { project-id: project-id }))
+        (milestone (map-get? project-milestones { project-id: project-id, milestone-id: milestone-id })))
+    (asserts! (is-some project) (err u1003))
+    (asserts! (is-some milestone) (err u1004))
+    (asserts! (is-eq tx-sender (get charity (unwrap-panic project))) (err u1005))
+    (ok (map-set project-milestones
+                 { project-id: project-id, milestone-id: milestone-id }
+                 { title: (get title (unwrap-panic milestone)),
+                   description: (get description (unwrap-panic milestone)),
+                   target-date: (get target-date (unwrap-panic milestone)),
+                   completed: true }))))
+                
+
+(define-map certificate-data 
+  { token-id: uint }
+  { donor: principal, amount: uint, charity: principal, timestamp: uint })
+
+(define-data-var last-token-id uint u0)
+
+(define-public (mint-certificate (amount uint) (charity principal))
+  (let ((token-id (+ (var-get last-token-id) u1)))
+    (var-set last-token-id token-id)
+    (map-set certificate-data
+      { token-id: token-id }
+      { donor: tx-sender,
+        amount: amount,
+        charity: charity,
+        timestamp: (unwrap-panic (get-block-info? time u0)) })
+    (ok token-id)))
+
+(define-read-only (get-token-uri (token-id uint))
+  (ok (some "https://api.charity-pool.org/certificate/")))
+
+(define-read-only (get-owner (token-id uint))
+  (ok (get donor (unwrap-panic (map-get? certificate-data { token-id: token-id })))))
+
+(define-read-only (get-certificate-details (token-id uint))
+  (map-get? certificate-data { token-id: token-id }))
+
+
+(define-map charity-needs
+  { charity: principal }
+  { urgency-level: uint,
+    current-goal: uint,
+    category: (string-ascii 32) })
+
+(define-map routing-weights
+  { category: (string-ascii 32) }
+  { weight: uint })
+
+(define-public (register-charity-need 
+    (urgency uint)
+    (goal uint)
+    (category (string-ascii 32)))
+  (ok (map-set charity-needs
+    { charity: tx-sender }
+    { urgency-level: urgency,
+      current-goal: goal,
+      category: category })))
+
+
+(define-private (check-charity-eligibility (charity-data { charity: principal }))
+  (let ((needs (unwrap-panic (map-get? charity-needs { charity: (get charity charity-data) }))))
+    (> (get urgency-level needs) u7)))
+
+
+
+(define-map league-seasons 
+    { season-id: uint }
+    { start-block: uint,
+     end-block: uint,
+     prize-pool: uint,
+     status: (string-ascii 16) })
+
+(define-map charity-performance
+    { season-id: uint, charity: principal }
+    { donor-count: uint,
+     total-raised: uint,
+     milestones-hit: uint,
+     score: uint })
+
+(define-data-var current-season-id uint u0)
+(define-data-var blocks-per-season uint u10000)
+
+(define-public (start-new-season (prize-pool uint))
+    (let ((season-id (+ (var-get current-season-id) u1))
+          (current-block block-height))
+        (try! (stake prize-pool))
+        (var-set current-season-id season-id)
+        (ok (map-set league-seasons
+            { season-id: season-id }
+            { start-block: current-block,
+              end-block: (+ current-block (var-get blocks-per-season)),
+              prize-pool: prize-pool,
+              status: "active" }))))
+
+(define-public (record-charity-activity 
+    (charity principal) 
+    (donation-amount uint)
+    (mileston uint))
+    (let ((season-id (var-get current-season-id))
+          (current-stats (default-to 
+            { donor-count: u0, total-raised: u0, milestones-hit: u0, score: u0 }
+            (map-get? charity-performance { season-id: season-id, charity: charity }))))
+        (ok (map-set charity-performance
+            { season-id: season-id, charity: charity }
+            { donor-count: (+ (get donor-count current-stats) u1),
+              total-raised: (+ (get total-raised current-stats) donation-amount),
+              milestones-hit: (+ (get milestones-hit current-stats) mileston),
+              score: (calculate-score donation-amount mileston) }))))
+
+(define-private (calculate-score (amount uint) (milestone uint))
+    (+ (* amount u2) (* milestone u1000)))
+
+(define-read-only (get-charity-ranking (season-id uint) (charity principal))
+    (map-get? charity-performance { season-id: season-id, charity: charity }))
+
+ (define-map donation-streams
+  { stream-id: uint }
+  { donor: principal,
+    charity: principal,
+    rate-per-block: uint,
+    total-amount: uint,
+    amount-streamed: uint,
+    start-block: uint,
+    end-block: uint,
+    last-claim-block: uint,
+    active: bool })
+
+(define-map donor-stream-balance
+  { donor: principal }
+  { deposited: uint,
+    available: uint })
+
+(define-data-var stream-counter uint u0)
+
+(define-public (create-donation-stream 
+    (charity principal)
+    (total-amount uint)
+    (duration-blocks uint))
+  (let ((stream-id (+ (var-get stream-counter) u1))
+        (current-block block-height)
+        (rate (/ total-amount duration-blocks)))
+    (asserts! (> total-amount u0) (err u1100))
+    (asserts! (> duration-blocks u0) (err u1101))
+    (asserts! (> rate u0) (err u1102))
+    
+    (try! (contract-call? .token transfer (as-contract tx-sender) total-amount))
+    
+    (let ((current-balance (default-to { deposited: u0, available: u0 }
+                          (map-get? donor-stream-balance { donor: tx-sender }))))
+      (map-set donor-stream-balance
+        { donor: tx-sender }
+        { deposited: (+ (get deposited current-balance) total-amount),
+          available: (+ (get available current-balance) total-amount) }))
+    
+    (var-set stream-counter stream-id)
+    (map-set donation-streams
+      { stream-id: stream-id }
+      { donor: tx-sender,
+        charity: charity,
+        rate-per-block: rate,
+        total-amount: total-amount,
+        amount-streamed: u0,
+        start-block: current-block,
+        end-block: (+ current-block duration-blocks),
+        last-claim-block: current-block,
+        active: true })
+    (ok stream-id)))
+
+(define-public (claim-stream-donations (stream-id uint))
+  (let ((stream (unwrap! (map-get? donation-streams { stream-id: stream-id }) (err u1103))))
+    (asserts! (get active stream) (err u1104))
+    (asserts! (<= block-height (get end-block stream)) (err u1105))
+    
+    (let ((blocks-elapsed (- block-height (get last-claim-block stream)))
+          (claimable-amount (* blocks-elapsed (get rate-per-block stream)))
+          (remaining-amount (- (get total-amount stream) (get amount-streamed stream))))
+      
+      (let ((actual-claim (if (> claimable-amount remaining-amount) 
+                            remaining-amount 
+                            claimable-amount)))
+        
+        (asserts! (> actual-claim u0) (err u1106))
+        
+        (try! (contract-call? .token transfer (get charity stream) actual-claim))
+        
+        (let ((donor-balance (unwrap-panic (map-get? donor-stream-balance { donor: (get donor stream) }))))
+          (map-set donor-stream-balance
+            { donor: (get donor stream) }
+            { deposited: (get deposited donor-balance),
+              available: (- (get available donor-balance) actual-claim) }))
+        
+        (let ((new-amount-streamed (+ (get amount-streamed stream) actual-claim))
+              (stream-completed (>= new-amount-streamed (get total-amount stream))))
+          
+          (map-set donation-streams
+            { stream-id: stream-id }
+            { donor: (get donor stream),
+              charity: (get charity stream),
+              rate-per-block: (get rate-per-block stream),
+              total-amount: (get total-amount stream),
+              amount-streamed: new-amount-streamed,
+              start-block: (get start-block stream),
+              end-block: (get end-block stream),
+              last-claim-block: block-height,
+              active: (not stream-completed) }))
+        
+        (ok actual-claim)))))
+
+(define-public (cancel-donation-stream (stream-id uint))
+  (let ((stream (unwrap! (map-get? donation-streams { stream-id: stream-id }) (err u1107))))
+    (asserts! (is-eq tx-sender (get donor stream)) (err u1108))
+    (asserts! (get active stream) (err u1109))
+    
+    (let ((remaining-amount (- (get total-amount stream) (get amount-streamed stream))))
+      (asserts! (> remaining-amount u0) (err u1110))
+      
+      (try! (contract-call? .token transfer tx-sender remaining-amount))
+      
+      (let ((donor-balance (unwrap-panic (map-get? donor-stream-balance { donor: tx-sender }))))
+        (map-set donor-stream-balance
+          { donor: tx-sender }
+          { deposited: (- (get deposited donor-balance) remaining-amount),
+            available: (- (get available donor-balance) remaining-amount) }))
+      
+      (map-set donation-streams
+        { stream-id: stream-id }
+        { donor: (get donor stream),
+          charity: (get charity stream),
+          rate-per-block: (get rate-per-block stream),
+          total-amount: (get total-amount stream),
+          amount-streamed: (get amount-streamed stream),
+          start-block: (get start-block stream),
+          end-block: (get end-block stream),
+          last-claim-block: (get last-claim-block stream),
+          active: false })
+      
+      (ok remaining-amount))))
+
+(define-read-only (get-stream-details (stream-id uint))
+  (map-get? donation-streams { stream-id: stream-id }))
+
+(define-read-only (get-claimable-amount (stream-id uint))
+  (let ((stream (unwrap! (map-get? donation-streams { stream-id: stream-id }) (err u1111))))
+    (if (get active stream)
+      (let ((blocks-elapsed (- block-height (get last-claim-block stream)))
+            (claimable-amount (* blocks-elapsed (get rate-per-block stream)))
+            (remaining-amount (- (get total-amount stream) (get amount-streamed stream))))
+        (ok (if (> claimable-amount remaining-amount) remaining-amount claimable-amount)))
+      (ok u0))))
+
+(define-read-only (get-donor-stream-balance (donor principal))
+  (default-to { deposited: u0, available: u0 }
+    (map-get? donor-stream-balance { donor: donor })))
+
+(define-public (batch-claim-streams (stream-ids (list 10 uint)))
+  (fold claim-single-stream stream-ids (ok u0)))
+
+(define-private (claim-single-stream (stream-id uint) (previous-result (response uint uint)))
+  (match previous-result
+    success (match (claim-stream-donations stream-id)
+              claim-success (ok (+ success claim-success))
+              claim-error (err claim-error))
+    error (err error))) 

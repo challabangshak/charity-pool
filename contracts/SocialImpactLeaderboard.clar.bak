@@ -1,0 +1,346 @@
+;; Social Impact Leaderboard
+;; Public ranking system that showcases donor contributions with privacy controls and social badges
+;; Gamifies charitable giving through competitive rankings and achievement unlocks
+
+(define-constant contract-owner tx-sender)
+(define-constant err-not-authorized (err u400))
+(define-constant err-invalid-period (err u401))
+(define-constant err-leaderboard-not-found (err u402))
+(define-constant err-invalid-rank (err u403))
+(define-constant err-privacy-restricted (err u404))
+(define-constant err-badge-not-earned (err u405))
+
+;; Privacy levels
+(define-constant PRIVACY_PUBLIC u1)
+(define-constant PRIVACY_ANONYMOUS u2)
+(define-constant PRIVACY_PRIVATE u3)
+
+;; Badge tiers
+(define-constant BADGE_BRONZE u1)
+(define-constant BADGE_SILVER u2)
+(define-constant BADGE_GOLD u3)
+(define-constant BADGE_PLATINUM u4)
+(define-constant BADGE_DIAMOND u5)
+
+;; Leaderboard periods
+(define-data-var current-season uint u1)
+(define-data-var season-duration uint u14400) ;; ~100 days in blocks
+(define-data-var season-start-block uint u0)
+
+;; Donor profiles with privacy controls
+(define-map donor-profiles
+    { donor: principal }
+    {
+        display-name: (string-ascii 50),
+        privacy-level: uint,
+        show-amounts: bool,
+        show-frequency: bool,
+        total-impact-score: uint,
+        current-season-score: uint,
+        badges-earned: (list 10 uint),
+        streak-days: uint,
+        last-activity: uint
+    }
+)
+
+;; Season leaderboards
+(define-map season-leaderboards
+    { season: uint, rank: uint }
+    {
+        donor: principal,
+        score: uint,
+        total-donated: uint,
+        charities-supported: uint,
+        badge-tier: uint
+    }
+)
+
+;; Impact achievements
+(define-map donor-achievements
+    { donor: principal, achievement-id: uint }
+    {
+        title: (string-ascii 100),
+        description: (string-ascii 200),
+        earned-date: uint,
+        achievement-type: (string-ascii 30), ;; "milestone", "streak", "diversity", "impact"
+        score-value: uint
+    }
+)
+
+;; Social challenges
+(define-map active-challenges
+    { challenge-id: uint }
+    {
+        title: (string-ascii 100),
+        description: (string-ascii 250),
+        target-amount: uint,
+        participants: uint,
+        total-raised: uint,
+        start-block: uint,
+        end-block: uint,
+        is-active: bool,
+        reward-pool: uint
+    }
+)
+
+;; Challenge participation
+(define-map challenge-participants
+    { challenge-id: uint, donor: principal }
+    {
+        contribution-amount: uint,
+        join-date: uint,
+        current-rank: uint
+    }
+)
+
+(define-data-var achievement-counter uint u0)
+(define-data-var challenge-counter uint u0)
+(define-data-var total-leaderboard-entries uint u0)
+
+;; Initialize or update donor profile
+(define-public (setup-donor-profile 
+    (display-name (string-ascii 50))
+    (privacy-level uint)
+    (show-amounts bool)
+    (show-frequency bool)
+)
+    (begin
+        (asserts! (<= privacy-level u3) err-not-authorized)
+        (asserts! (>= privacy-level u1) err-not-authorized)
+        
+        (let ((existing-profile (map-get? donor-profiles { donor: tx-sender })))
+            (map-set donor-profiles
+                { donor: tx-sender }
+                {
+                    display-name: display-name,
+                    privacy-level: privacy-level,
+                    show-amounts: show-amounts,
+                    show-frequency: show-frequency,
+                    total-impact-score: (default-to u0 (get total-impact-score existing-profile)),
+                    current-season-score: (default-to u0 (get current-season-score existing-profile)),
+                    badges-earned: (default-to (list) (get badges-earned existing-profile)),
+                    streak-days: (default-to u0 (get streak-days existing-profile)),
+                    last-activity: stacks-block-height
+                }
+            )
+        )
+        (ok true)
+    )
+)
+
+;; Record donation impact for leaderboard
+(define-public (record-donation-impact 
+    (donor principal)
+    (donation-amount uint)
+    (charity principal)
+    (impact-multiplier uint)
+)
+    (let 
+        (
+            (profile (default-to 
+                {
+                    display-name: "Anonymous",
+                    privacy-level: PRIVACY_ANONYMOUS,
+                    show-amounts: false,
+                    show-frequency: false,
+                    total-impact-score: u0,
+                    current-season-score: u0,
+                    badges-earned: (list),
+                    streak-days: u0,
+                    last-activity: u0
+                }
+                (map-get? donor-profiles { donor: donor })
+            ))
+            (impact-score (/ (* donation-amount impact-multiplier) u100))
+        )
+        
+        ;; Update donor profile with new impact
+        (map-set donor-profiles
+            { donor: donor }
+            (merge profile {
+                total-impact-score: (+ (get total-impact-score profile) impact-score),
+                current-season-score: (+ (get current-season-score profile) impact-score),
+                last-activity: stacks-block-height
+            })
+        )
+        
+        ;; Check for new badge achievements
+        (unwrap-panic (check-and-award-badges donor (+ (get total-impact-score profile) impact-score)))
+        
+        ;; Update leaderboard position
+        (unwrap-panic (update-leaderboard-position donor))
+        
+        (ok impact-score)
+    )
+)
+
+;; Check and award badges based on total score
+(define-private (check-and-award-badges (donor principal) (total-score uint))
+    (let ((profile (unwrap-panic (map-get? donor-profiles { donor: donor }))))
+        (let ((current-badges (get badges-earned profile))
+              (new-badge (if (>= total-score u1000000) BADGE_DIAMOND
+                           (if (>= total-score u500000) BADGE_PLATINUM
+                             (if (>= total-score u100000) BADGE_GOLD
+                               (if (>= total-score u50000) BADGE_SILVER
+                                 (if (>= total-score u10000) BADGE_BRONZE u0)))))))
+            
+            (if (and (> new-badge u0) (not (is-some (index-of current-badges new-badge))))
+                (let ((updated-badges (unwrap-panic (as-max-len? (append current-badges new-badge) u10))))
+                    (map-set donor-profiles
+                        { donor: donor }
+                        (merge profile { badges-earned: updated-badges })
+                    )
+                )
+                true
+            )
+        )
+        (ok true)
+)
+
+;; Update leaderboard position for donor
+(define-private (update-leaderboard-position (donor principal))
+    (let 
+        (
+            (profile (unwrap-panic (map-get? donor-profiles { donor: donor })))
+            (current-season (var-get current-season))
+        )
+        ;; For simplicity, just record at position 1 for now
+        ;; In a real implementation, would sort and rank all donors
+        (map-set season-leaderboards
+            { season: current-season, rank: u1 }
+            {
+                donor: donor,
+                score: (get current-season-score profile),
+                total-donated: (get total-impact-score profile),
+                charities-supported: u1, ;; Would track this properly
+                badge-tier: (get-highest-badge-tier (get badges-earned profile))
+            }
+        )
+        (ok true)
+    )
+)
+
+;; Get highest badge tier from badge list
+(define-private (get-highest-badge-tier (badges (list 10 uint)))
+    (fold max badges u0)
+)
+
+;; Create social challenge
+(define-public (create-social-challenge
+    (title (string-ascii 100))
+    (description (string-ascii 250))
+    (target-amount uint)
+    (duration-blocks uint)
+    (reward-pool uint)
+)
+    (let ((challenge-id (+ (var-get challenge-counter) u1)))
+        (asserts! (is-eq tx-sender contract-owner) err-not-authorized)
+        (asserts! (> target-amount u0) err-invalid-period)
+        (asserts! (> duration-blocks u0) err-invalid-period)
+        
+        (map-set active-challenges
+            { challenge-id: challenge-id }
+            {
+                title: title,
+                description: description,
+                target-amount: target-amount,
+                participants: u0,
+                total-raised: u0,
+                start-block: stacks-block-height,
+                end-block: (+ stacks-block-height duration-blocks),
+                is-active: true,
+                reward-pool: reward-pool
+            }
+        )
+        
+        (var-set challenge-counter challenge-id)
+        (ok challenge-id)
+    )
+)
+
+;; Join social challenge
+(define-public (join-challenge (challenge-id uint))
+    (let 
+        (
+            (challenge (unwrap! (map-get? active-challenges { challenge-id: challenge-id }) err-leaderboard-not-found))
+        )
+        (asserts! (get is-active challenge) err-invalid-period)
+        (asserts! (<= stacks-block-height (get end-block challenge)) err-invalid-period)
+        
+        (map-set challenge-participants
+            { challenge-id: challenge-id, donor: tx-sender }
+            {
+                contribution-amount: u0,
+                join-date: stacks-block-height,
+                current-rank: u0
+            }
+        )
+        
+        (map-set active-challenges
+            { challenge-id: challenge-id }
+            (merge challenge { participants: (+ (get participants challenge) u1) })
+        )
+        
+        (ok true)
+    )
+)
+
+;; Start new season
+(define-public (start-new-season)
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-not-authorized)
+        (var-set current-season (+ (var-get current-season) u1))
+        (var-set season-start-block stacks-block-height)
+        
+        ;; Reset current season scores for all donors would happen here
+        ;; For simplicity, just mark season as started
+        (ok (var-get current-season))
+    )
+)
+
+;; Read-only functions
+(define-read-only (get-donor-profile (donor principal))
+    (let ((profile (map-get? donor-profiles { donor: donor })))
+        (match profile
+            prof (if (is-eq (get privacy-level prof) PRIVACY_PRIVATE)
+                    none
+                    (some prof))
+            none
+        )
+    )
+)
+
+(define-read-only (get-leaderboard-entry (season uint) (rank uint))
+    (map-get? season-leaderboards { season: season, rank: rank })
+)
+
+(define-read-only (get-challenge-details (challenge-id uint))
+    (map-get? active-challenges { challenge-id: challenge-id })
+)
+
+(define-read-only (get-challenge-participation (challenge-id uint) (donor principal))
+    (map-get? challenge-participants { challenge-id: challenge-id, donor: donor })
+)
+
+(define-read-only (get-current-season)
+    (var-get current-season)
+)
+
+(define-read-only (get-donor-rank (donor principal) (season uint))
+    ;; Would implement proper ranking logic here
+    ;; For now, return default rank
+    (some u1)
+)
+
+(define-read-only (calculate-impact-score (amount uint) (frequency uint) (diversity uint))
+    (+ amount (* frequency u10) (* diversity u50))
+)
+
+(define-read-only (get-badge-name (badge-tier uint))
+    (if (is-eq badge-tier BADGE_DIAMOND) "Diamond Philanthropist"
+        (if (is-eq badge-tier BADGE_PLATINUM) "Platinum Supporter" 
+            (if (is-eq badge-tier BADGE_GOLD) "Gold Contributor"
+                (if (is-eq badge-tier BADGE_SILVER) "Silver Donor"
+                    (if (is-eq badge-tier BADGE_BRONZE) "Bronze Helper"
+                        "Unranked")))))
+)
